@@ -69,7 +69,7 @@ export function ChoiceChip({
   return (
     <button
       type="button"
-      aria-pressed={selected}
+      aria-pressed={rest.role === "radio" ? undefined : selected}
       className={cx(
         "inline-flex h-11 items-center justify-center gap-2 rounded-full px-4 text-[15px] font-medium transition-colors",
         selected ? "bg-accent text-on-accent" : "border border-line bg-surface text-ink hover:bg-surface-2",

@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Streaming metadata would put <link rel="manifest"> in <body>, where Chrome ignores it and the
+  // PWA (and its Android share target) becomes uninstallable. Render metadata in <head> for everyone.
+  htmlLimitedBots: /.*/,
   async headers() {
     return [
       {

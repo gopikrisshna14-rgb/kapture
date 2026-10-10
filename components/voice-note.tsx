@@ -108,7 +108,7 @@ export function VoiceNote({ value, onChange }: { value: string; onChange: (v: st
             type="button"
             onClick={() => setLang(lang === "de-DE" ? "en-GB" : "de-DE")}
             className="inline-flex h-11 min-w-11 items-center justify-center rounded-full border border-line px-3 text-[13px] font-semibold"
-            aria-label={`Speech language: ${lang === "de-DE" ? "German" : "English"}. Tap to switch.`}
+            aria-label={`${lang === "de-DE" ? "DE" : "EN"}: speech language, tap to switch to ${lang === "de-DE" ? "English" : "German"}`}
           >
             {lang === "de-DE" ? "DE" : "EN"}
           </button>
