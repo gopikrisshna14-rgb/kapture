@@ -3,7 +3,6 @@ import { fail, json, readJson, withRepo } from "@/lib/api";
 // Client-reported pilot events. Server-side events are logged directly by the routes that cause them.
 const ALLOWED = new Set([
   "capture_started",
-  "capture_saved",
   "note_copied",
   "followup_email_opened",
 ]);
