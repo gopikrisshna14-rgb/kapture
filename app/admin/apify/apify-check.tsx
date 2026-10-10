@@ -25,6 +25,7 @@ interface Run {
   shape?: unknown;
   mapping?: Record<string, string | null> | null;
   profile?: Record<string, unknown> | null;
+  preview?: [string, string][];
   error?: string;
 }
 
@@ -131,6 +132,25 @@ export function ApifyCheck() {
                 The actor finished in {run.seconds.toFixed(1)} s but returned nothing. It may not support this profile, or it needs a different input.
                 <p className="mt-2 text-[12px] text-dim">Sent: <span className="font-mono">{JSON.stringify(run.input)}</span></p>
               </Card>
+            ) : !BASIC.some((f) => run.profile?.[f === "photo" ? "photoUrl" : f]) ? (
+              <>
+                <Card className="border-danger p-4 text-[14px]">
+                  <p className="font-semibold text-danger">Apify answered, but not with a profile</p>
+                  <p className="mt-1 text-muted">
+                    Usually this means the profile doesn&apos;t exist or is hidden, or the actor needs a LinkedIn login (cookies). Try your own profile link. If it&apos;s the same, choose a different actor.
+                  </p>
+                  <p className="mt-3 font-semibold">What Apify returned</p>
+                  <dl className="mt-1 space-y-1">
+                    {(run.preview ?? []).map(([k, v]) => (
+                      <div key={k} className="flex gap-3 text-[13px]">
+                        <dt className="shrink-0 font-mono text-muted">{k}</dt>
+                        <dd className="min-w-0 break-words">{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="mt-2 text-[12px] text-dim">Sent: <span className="font-mono">{JSON.stringify(run.input)}</span> · {run.seconds.toFixed(1)} s</p>
+                </Card>
+              </>
             ) : (
               <>
                 <Card className="p-4">

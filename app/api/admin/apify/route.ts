@@ -36,6 +36,16 @@ function shape(v: unknown, depth = 0): Shape {
   return v === null ? "null" : typeof v;
 }
 
+/** First level of the item, values shortened: shows messages like "profile not found" or "login required". */
+function preview(item: Record<string, unknown>): [string, string][] {
+  return Object.entries(item).slice(0, 25).map(([k, v]) => {
+    if (Array.isArray(v)) return [k, `list of ${v.length}`];
+    if (v && typeof v === "object") return [k, `{ ${Object.keys(v).slice(0, 6).join(", ")}${Object.keys(v).length > 6 ? ", …" : ""} }`];
+    const t = String(v);
+    return [k, t.length > 160 ? t.slice(0, 160) + "…" : t];
+  });
+}
+
 /** Runs the profile actor once on a URL the admin chose; returns the item's shape and the mapped fields. */
 export async function POST(req: Request) {
   if (!(await isAdmin())) return fail("Not found", 404);
@@ -58,7 +68,7 @@ export async function POST(req: Request) {
     if (!item) return json({ seconds: (Date.now() - t0) / 1000, input, items: 0, shape: null, mapping: null, profile: null });
     const { raw: _raw, ...profile } = mapProfile(item, url);
     void _raw;
-    return json({ seconds: (Date.now() - t0) / 1000, input, items: items.length, shape: shape(item), mapping: mappingReport(item), profile });
+    return json({ seconds: (Date.now() - t0) / 1000, input, items: items.length, shape: shape(item), mapping: mappingReport(item), profile, preview: preview(item) });
   } catch (e) {
     return json({ seconds: (Date.now() - t0) / 1000, input, error: (e as Error).message }, 502);
   }

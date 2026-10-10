@@ -22,3 +22,39 @@ test("maps nested location and skill objects", () => {
   assert.equal(p.location, "Berlin");
   assert.deepEqual(p.skills, ["Sourcing", "Logistics"]);
 });
+
+test("finds fields in nested and unknown shapes", () => {
+  const wrapped = mapProfile(
+    { data: { person: { fullName: "Julia Neumann", headline: "VP Sales", locationName: "Munich", profilePicHighQuality: "https://x/p.jpg", currentCompanyName: "Kardex", positions: [{ title: "VP Sales", companyName: "Kardex" }] } } },
+    "u",
+  );
+  assert.equal(wrapped.name, "Julia Neumann");
+  assert.equal(wrapped.headline, "VP Sales");
+  assert.equal(wrapped.location, "Munich");
+  assert.equal(wrapped.company, "Kardex");
+  assert.equal(wrapped.photoUrl, "https://x/p.jpg");
+  assert.equal(wrapped.experience?.length, 1);
+});
+
+test("object values become text; job titles never become the headline", () => {
+  const p = mapProfile({ first_name: "A", last_name: "B", location: { city: "Berlin", country: "Germany" }, experiences: [{ title: "CEO", company: "X" }] }, "u");
+  assert.equal(p.name, "A B");
+  assert.equal(p.location, "Berlin, Germany");
+  assert.equal(p.headline, undefined);
+  assert.equal(p.role, "CEO");
+});
+
+test("an error-like item maps to nothing", () => {
+  const p = mapProfile({ url: "https://www.linkedin.com/in/x", status: "not_found", message: "Profile not available" }, "u");
+  assert.equal(p.name, undefined);
+  assert.equal(p.headline, undefined);
+});
+
+test("a company's name is never taken as the person's name", () => {
+  const p = mapProfile({ firstName: "Lena", lastName: "Hoffmann", currentCompany: { name: "Brandt" } }, "u");
+  assert.equal(p.name, "Lena Hoffmann");
+  assert.equal(p.company, "Brandt");
+  const q = mapProfile({ result: { company: { name: "Brandt" }, headline: "Buyer" } }, "u");
+  assert.equal(q.name, undefined);
+  assert.equal(q.company, "Brandt");
+});

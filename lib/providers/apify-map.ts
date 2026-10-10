@@ -1,11 +1,8 @@
 // Maps Apify actor dataset items to NormalizedProfile.
 //
-// STATUS: UNVERIFIED. api.apify.com and apify.com were unreachable from the build sandbox, so the real
-// output keys of atomus/linkedin-profile-scraper (and any posts / search actor) could not be fetched.
-// Run `node scripts/apify-inspect.mjs <actor> <linkedin-url>` with APIFY_TOKEN set, compare the printed
-// keys with the candidate lists below, and trim each list to the one real key before going live.
-// Until then each field tries a short list of candidate keys and never invents a value: a key that is
-// not present simply leaves the field empty.
+// Actors differ in shape, so each field tries: an APIFY_FIELD_MAP override, a list of known paths, then a
+// search of the item by key name. It never invents a value: a key that is not present leaves the field empty.
+// Check a real actor at /admin/apify.
 import type { Candidate, EducationItem, ExperienceItem, NormalizedProfile, RecentPost } from "../types";
 
 type Obj = Record<string, unknown>;
@@ -18,10 +15,61 @@ function getPath(o: unknown, k: string): unknown {
   }, o);
 }
 
+const norm = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+const present = (v: unknown) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
+
+/**
+ * Fallback when no known path matches: search the item (up to 4 levels deep, objects only, so a job's
+ * "title" inside experience[] is never taken for the headline) for a key with one of these names.
+ * Different actors nest the profile differently ({data:{...}}, {basic_info:{...}}, {profile:{...}}).
+ */
+function deepFind(o: unknown, names: string[], wantArray: boolean, path = "", depth = 0): [unknown, string] | null {
+  if (!isObj(o) || depth > 4) return null;
+  for (const [k, v] of Object.entries(o)) {
+    if (names.includes(norm(k)) && present(v) && Array.isArray(v) === wantArray) return [v, path + k];
+  }
+  for (const [k, v] of Object.entries(o)) {
+    // Never look inside things that have their own "name"/"title" (a company's name isn't the person's).
+    if (NO_DESCEND.test(norm(k))) continue;
+    if (isObj(v)) {
+      const hit = deepFind(v, names, wantArray, `${path}${k}.`, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+const NO_DESCEND = /company|organi[sz]ation|employer|school|education|experience|position|location|geo|post|activit|article|recommend|group|certific|project|language|volunteer|honor|award|course|patent|publication/;
+
+const ARRAY_FIELDS = new Set(["experience", "education", "skills", "posts"]);
+export const DEEP_NAMES: Record<string, string[]> = {
+  name: ["fullname", "name", "profilename", "displayname"],
+  firstName: ["firstname", "givenname"],
+  lastName: ["lastname", "familyname", "surname"],
+  headline: ["headline", "occupation", "tagline"],
+  about: ["about", "summary", "bio"],
+  location: ["location", "locationname", "addresswithcountry", "geolocationname", "geolocation"],
+  company: ["currentcompany", "companyname", "currentcompanyname", "company", "organization", "employer"],
+  role: ["jobtitle", "currentjobtitle", "position", "currentposition", "role"],
+  experience: ["experience", "experiences", "positions", "workhistory", "jobs"],
+  education: ["education", "educations", "schools"],
+  skills: ["skills"],
+  posts: ["posts", "recentposts", "activity", "activities"],
+  followers: ["followers", "followerscount", "followercount"],
+  connections: ["connections", "connectionscount", "connectioncount"],
+  photo: ["profilepicture", "profilepic", "profilepicurl", "profilepictureurl", "profilepicturehighquality", "profilepichighquality", "pictureurl", "picture", "photo", "photourl", "avatar", "profileimage", "imageurl"],
+};
+
+let currentField: string | null = null;
 function pickKey(o: Obj, keys: string[]): [unknown, string | undefined] {
   for (const k of keys) {
     const v = getPath(o, k);
-    if (v !== undefined && v !== null && v !== "") return [v, k];
+    if (present(v)) return [v, k];
+  }
+  const field = currentField;
+  if (field && DEEP_NAMES[field]) {
+    const hit = deepFind(o, DEEP_NAMES[field], ARRAY_FIELDS.has(field));
+    if (hit) return hit;
   }
   return [undefined, undefined];
 }
@@ -39,7 +87,19 @@ export function fieldOverrides(): Partial<Record<keyof typeof PROFILE_KEYS, stri
     return {};
   }
 }
-const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : undefined);
+const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : undefined);
+/** Text from a string, or from the usual label keys of an object ({name}, {default}, {full}, ...). */
+const s = (v: unknown): string | undefined => {
+  if (isObj(v)) {
+    for (const k of ["name", "default", "full", "linkedinText", "text", "title", "value"]) {
+      const t = str(v[k]);
+      if (t) return t;
+    }
+    const parts = ["city", "region", "state", "country"].map((k) => str(v[k])).filter(Boolean);
+    return parts.length ? parts.join(", ") : undefined;
+  }
+  return str(v);
+};
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined);
 const arr = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isObj) : []);
 
@@ -62,6 +122,7 @@ export const PROFILE_KEYS: Record<string, string[]> = {
 };
 
 function mapExperience(items: Obj[]): ExperienceItem[] {
+  currentField = null; // nested entries: known paths only
   return items
     .map((e) => ({
       title: s(pick(e, ["title", "position", "jobTitle"])),
@@ -75,6 +136,7 @@ function mapExperience(items: Obj[]): ExperienceItem[] {
 }
 
 function mapEducation(items: Obj[]): EducationItem[] {
+  currentField = null; // nested entries: known paths only
   return items
     .map((e) => ({
       school: s(pick(e, ["schoolName", "school", "title", "school.name"])),
@@ -87,6 +149,7 @@ function mapEducation(items: Obj[]): EducationItem[] {
 }
 
 function mapSkills(v: unknown): string[] {
+  currentField = null; // nested entries: known paths only
   if (!Array.isArray(v)) return [];
   return v
     .map((x) => (typeof x === "string" ? x : isObj(x) ? s(pick(x, ["name", "title", "skill"])) : undefined))
@@ -94,6 +157,7 @@ function mapSkills(v: unknown): string[] {
 }
 
 export function mapPosts(v: unknown): RecentPost[] {
+  currentField = null; // nested entries: known paths only
   return arr(v)
     .map((p) => ({
       text: s(pick(p, ["text", "content", "commentary", "postText"])),
@@ -105,6 +169,7 @@ export function mapPosts(v: unknown): RecentPost[] {
 }
 
 function photoUrl(v: unknown): string | undefined {
+  currentField = null; // nested entries: known paths only
   if (typeof v === "string" && /^https?:\/\//.test(v)) return v;
   if (isObj(v)) return s(pick(v, ["url", "displayImage", "large", "original"]));
   return undefined;
@@ -112,6 +177,7 @@ function photoUrl(v: unknown): string | undefined {
 
 /** Keys to try for a field: an env override first, then the built-in candidates. */
 function keysFor(field: string): string[] {
+  currentField = field;
   const o = (fieldOverrides() as Record<string, string | undefined>)[field];
   return o ? [o, ...PROFILE_KEYS[field]] : PROFILE_KEYS[field];
 }
@@ -120,6 +186,7 @@ function keysFor(field: string): string[] {
 export function mappingReport(item: Obj): Record<string, string | null> {
   const out: Record<string, string | null> = {};
   for (const f of Object.keys(PROFILE_KEYS)) out[f] = pickKey(item, keysFor(f))[1] ?? null;
+  currentField = null;
   return out;
 }
 
@@ -146,10 +213,12 @@ export function mapProfile(item: Obj, linkedinUrl: string): NormalizedProfile {
     photoUrl: photoUrl(pick(item, K("photo"))),
     raw: item,
   };
+  currentField = null;
   return profile;
 }
 
 export function mapCandidate(item: Obj): Candidate | null {
+  currentField = null;
   const url = s(pick(item, ["linkedinUrl", "profileUrl", "url", "publicProfileUrl"]));
   if (!url) return null;
   return {
