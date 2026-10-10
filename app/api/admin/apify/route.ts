@@ -1,7 +1,7 @@
 import { fail, json, readJson } from "@/lib/api";
 import { isAdmin } from "@/lib/admin";
 import { isDemoMode } from "@/lib/config";
-import { actorInputSchema, buildInput, runActor } from "@/lib/providers/apify";
+import { actorInputSchema, profileInput, runActor } from "@/lib/providers/apify";
 import { mapProfile, mappingReport } from "@/lib/providers/apify-map";
 import { normalizeLinkedInUrl } from "@/lib/linkedin";
 
@@ -44,11 +44,17 @@ export async function POST(req: Request) {
   const b = await readJson(req);
   const url = normalizeLinkedInUrl(String(b.url ?? ""));
   if (!url) return fail("Paste a LinkedIn profile link.");
-  const input = buildInput(process.env.APIFY_PROFILE_INPUT, { profileUrls: [url] }, { url });
   const t0 = Date.now();
+  let input: Record<string, unknown> = {};
   try {
+    input = await profileInput(s.actor, url);
     const items = await runActor(s.actor, input);
-    const item = items.find((i) => !("error" in i)) ?? items[0] ?? null;
+    const item = items.find((i) => !("error" in i)) ?? null;
+    const itemError = items.find((i) => "error" in i) as { error?: unknown } | undefined;
+    if (!item && itemError) {
+      const msg = typeof itemError.error === "string" ? itemError.error : JSON.stringify(itemError.error);
+      return json({ seconds: (Date.now() - t0) / 1000, input, error: `The actor ran but returned an error: ${msg}` }, 502);
+    }
     if (!item) return json({ seconds: (Date.now() - t0) / 1000, input, items: 0, shape: null, mapping: null, profile: null });
     const { raw: _raw, ...profile } = mapProfile(item, url);
     void _raw;

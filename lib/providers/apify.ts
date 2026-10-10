@@ -2,6 +2,8 @@ import "server-only";
 import type { Candidate, NormalizedProfile } from "../types";
 import { ProfileProvider, ProviderError } from "./types";
 import { mapCandidate, mapPosts, mapProfile } from "./apify-map";
+import { inputFromSchema, type InputSchema } from "./apify-input";
+export type { InputSchema } from "./apify-input";
 
 // APIFY_API_BASE exists only for tests against a stand-in server.
 const API = process.env.APIFY_API_BASE || "https://api.apify.com/v2";
@@ -16,6 +18,16 @@ export function buildInput(template: string | undefined, fallback: Record<string
   let s = template;
   for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(JSON.stringify(v).slice(1, -1));
   return JSON.parse(s) as Record<string, unknown>;
+}
+
+/** Apify's own explanation, e.g. "insufficient credit" or "actor must be rented". */
+async function apifyErrorMessage(r: Response): Promise<string> {
+  try {
+    const d = (await r.json()) as { error?: { message?: string; type?: string } };
+    return d.error?.message || d.error?.type || r.statusText;
+  } catch {
+    return r.statusText || "unknown error";
+  }
 }
 
 export async function runActor(actor: string, input: Record<string, unknown>): Promise<Record<string, unknown>[]> {
@@ -33,7 +45,7 @@ export async function runActor(actor: string, input: Record<string, unknown>): P
       cache: "no-store",
     });
     if (r.status === 408) throw new ProviderError("Apify run timed out", "timeout");
-    if (!r.ok) throw new ProviderError(`Apify ${r.status}`, "upstream");
+    if (!r.ok) throw new ProviderError(`Apify ${r.status}: ${await apifyErrorMessage(r)}`, r.status === 401 || r.status === 403 || r.status === 404 ? "config" : "upstream");
     const data = (await r.json()) as unknown;
     return Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
   } catch (e) {
@@ -50,12 +62,13 @@ export class ApifyProvider implements ProfileProvider {
 
   async getProfile(linkedinUrl: string): Promise<NormalizedProfile> {
     const actor = process.env.APIFY_PROFILE_ACTOR!;
-    const items = await runActor(
-      actor,
-      buildInput(process.env.APIFY_PROFILE_INPUT, { profileUrls: [linkedinUrl] }, { url: linkedinUrl }),
-    );
+    const items = await runActor(actor, await profileInput(actor, linkedinUrl));
     const item = items.find((i) => !("error" in i)) ?? null;
-    if (!item) throw new ProviderError("No profile returned", items.length ? "not_found" : "empty");
+    if (!item) {
+      const err = items.find((i) => "error" in i) as { error?: unknown } | undefined;
+      const msg = typeof err?.error === "string" ? err.error : (err?.error as { message?: string } | undefined)?.message;
+      throw new ProviderError(msg ? `Actor returned an error: ${msg}` : "No profile returned", items.length ? "not_found" : "empty");
+    }
     const profile = mapProfile(item, linkedinUrl);
 
     // Separate posts actor, only if the profile actor returned none.
@@ -92,22 +105,45 @@ export class ApifyProvider implements ProfileProvider {
   }
 }
 
-/** For /admin/apify: the actor's input schema properties (names and types only). */
-export async function actorInputSchema(actor: string): Promise<{ title?: string; properties: { key: string; type: string; title?: string }[]; required: string[] }> {
+const schemaCache = new Map<string, { at: number; schema: InputSchema }>();
+
+/** The actor's input schema (names, types, prefill), cached for an hour per server instance. */
+export async function actorInputSchema(actor: string): Promise<InputSchema> {
+  const hit = schemaCache.get(actor);
+  if (hit && Date.now() - hit.at < 3600_000) return hit.schema;
   const token = process.env.APIFY_TOKEN;
   if (!token) throw new ProviderError("APIFY_TOKEN missing", "config");
   const h = { authorization: `Bearer ${token}` };
   const act = await fetch(`${API}/acts/${actor.replace("/", "~")}`, { headers: h, cache: "no-store" });
-  if (act.status === 401) throw new ProviderError("Apify rejected the token", "config");
-  if (act.status === 404) throw new ProviderError("Actor not found: check APIFY_PROFILE_ACTOR", "config");
+  if (act.status === 401) throw new ProviderError("Apify rejected the token. Check APIFY_TOKEN in Vercel.", "config");
+  if (act.status === 404) throw new ProviderError("Actor not found. Check APIFY_PROFILE_ACTOR (format: user/actor-name).", "config");
+  if (!act.ok) throw new ProviderError(`Apify ${act.status}: ${await apifyErrorMessage(act)}`, "upstream");
   const a = (await act.json()) as { data?: { title?: string; taggedBuilds?: { latest?: { buildId?: string } } } };
   const buildId = a.data?.taggedBuilds?.latest?.buildId;
-  if (!buildId) return { title: a.data?.title, properties: [], required: [] };
-  const b = (await (await fetch(`${API}/actor-builds/${buildId}`, { headers: h, cache: "no-store" })).json()) as { data?: { inputSchema?: string } };
-  const schema = b.data?.inputSchema ? (JSON.parse(b.data.inputSchema) as { properties?: Record<string, { type?: string; title?: string }>; required?: string[] }) : {};
-  return {
-    title: a.data?.title,
-    properties: Object.entries(schema.properties ?? {}).map(([key, v]) => ({ key, type: v.type ?? "?", title: v.title })),
-    required: schema.required ?? [],
-  };
+  let schema: InputSchema = { title: a.data?.title, properties: [], required: [] };
+  if (buildId) {
+    const b = (await (await fetch(`${API}/actor-builds/${buildId}`, { headers: h, cache: "no-store" })).json()) as { data?: { inputSchema?: string } };
+    const raw = b.data?.inputSchema
+      ? (JSON.parse(b.data.inputSchema) as { properties?: Record<string, { type?: string; title?: string; editor?: string; prefill?: unknown; default?: unknown }>; required?: string[] })
+      : {};
+    schema = {
+      title: a.data?.title,
+      properties: Object.entries(raw.properties ?? {}).map(([key, v]) => ({ key, type: v.type ?? "?", title: v.title, editor: v.editor, prefill: v.prefill, default: v.default })),
+      required: raw.required ?? [],
+    };
+  }
+  schemaCache.set(actor, { at: Date.now(), schema });
+  return schema;
+}
+
+/** APIFY_PROFILE_INPUT wins; otherwise the field is found from the actor's schema; last resort {profileUrls}. */
+export async function profileInput(actor: string, url: string): Promise<Record<string, unknown>> {
+  if (process.env.APIFY_PROFILE_INPUT) return buildInput(process.env.APIFY_PROFILE_INPUT, {}, { url });
+  try {
+    const auto = inputFromSchema(await actorInputSchema(actor), url);
+    if (auto) return auto;
+  } catch (e) {
+    if (e instanceof ProviderError && e.kind === "config") throw e;
+  }
+  return { profileUrls: [url] };
 }

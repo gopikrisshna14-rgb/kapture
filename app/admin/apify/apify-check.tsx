@@ -102,8 +102,11 @@ export function ApifyCheck() {
                 </p>
               ))}
               <p className="pt-2 text-[12px] text-dim">
-                Catch sends {s?.inputTemplate ? <span className="font-mono">{s.inputTemplate}</span> : <span className="font-mono">{`{"profileUrls":["{url}"]}`}</span>}.
-                If the link field above has a different name, set APIFY_PROFILE_INPUT in Vercel, e.g. <span className="font-mono">{`{"urls":["{url}"]}`}</span>.
+                {s?.inputTemplate ? (
+                  <>Using your APIFY_PROFILE_INPUT: <span className="font-mono">{s.inputTemplate}</span></>
+                ) : (
+                  <>The app picks the link field from this list automatically. The test below shows exactly what it sent.</>
+                )}
               </p>
             </Card>
           </>
@@ -121,13 +124,17 @@ export function ApifyCheck() {
               <Card className="border-danger p-4 text-[14px]">
                 <p className="font-semibold text-danger">Apify run failed</p>
                 <p className="mt-1 text-muted">{run.error}</p>
+                <p className="mt-2 text-[12px] text-dim">Sent: <span className="font-mono">{JSON.stringify(run.input)}</span></p>
               </Card>
             ) : run.items === 0 ? (
-              <Card className="p-4 text-[14px] text-muted">The actor finished in {run.seconds.toFixed(1)} s but returned nothing. The input field name is probably wrong (see above).</Card>
+              <Card className="p-4 text-[14px] text-muted">
+                The actor finished in {run.seconds.toFixed(1)} s but returned nothing. It may not support this profile, or it needs a different input.
+                <p className="mt-2 text-[12px] text-dim">Sent: <span className="font-mono">{JSON.stringify(run.input)}</span></p>
+              </Card>
             ) : (
               <>
                 <Card className="p-4">
-                  <p className="text-[13px] text-muted">Basic data, finished in {run.seconds.toFixed(1)} s</p>
+                  <p className="text-[13px] text-muted">Basic data, finished in {run.seconds.toFixed(1)} s · sent <span className="font-mono">{JSON.stringify(run.input)}</span></p>
                   {BASIC.map((f) => {
                     const val = run.profile?.[f === "photo" ? "photoUrl" : f];
                     return <Row key={f} ok={Boolean(val)} label={f} detail={typeof val === "string" ? val : run.mapping?.[f] ?? "not found"} />;
