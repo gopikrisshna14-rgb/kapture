@@ -1,5 +1,5 @@
 import "server-only";
-import { realAI } from "../config";
+import { isDemoMode, realAI } from "../config";
 import { askJson, askText, nstr } from "./claude";
 import { FIXTURE_CARDS } from "../providers/fixtures";
 import { compactProfile, verifyBrief, clampNote, hasValue } from "../grounding";
@@ -18,6 +18,8 @@ const CARD_SCHEMA = {
 
 export async function extractCard(base64: string, mediaType: "image/jpeg" | "image/png" | "image/webp"): Promise<CardFields> {
   if (!realAI()) {
+    // Sample cards only in demo mode; outside it, never return made-up contact details.
+    if (!isDemoMode()) throw new Error("ai_not_configured");
     await sleep(1200);
     return FIXTURE_CARDS[base64.length % FIXTURE_CARDS.length];
   }

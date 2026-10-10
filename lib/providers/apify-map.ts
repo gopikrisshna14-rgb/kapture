@@ -11,33 +11,54 @@ import type { Candidate, EducationItem, ExperienceItem, NormalizedProfile, Recen
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
-function pick(o: Obj, keys: string[]): unknown {
+function getPath(o: unknown, k: string): unknown {
+  return k.split(".").reduce<unknown>((acc, part) => {
+    if (Array.isArray(acc) && /^\d+$/.test(part)) return acc[Number(part)];
+    return isObj(acc) ? acc[part] : undefined;
+  }, o);
+}
+
+function pickKey(o: Obj, keys: string[]): [unknown, string | undefined] {
   for (const k of keys) {
-    const v = k.split(".").reduce<unknown>((acc, part) => (isObj(acc) ? acc[part] : undefined), o);
-    if (v !== undefined && v !== null && v !== "") return v;
+    const v = getPath(o, k);
+    if (v !== undefined && v !== null && v !== "") return [v, k];
   }
-  return undefined;
+  return [undefined, undefined];
+}
+const pick = (o: Obj, keys: string[]) => pickKey(o, keys)[0];
+
+/**
+ * Optional override from env, once the real keys are known (see /admin/apify), e.g.
+ * APIFY_FIELD_MAP={"name":"fullName","company":"experiences.0.companyName"}
+ */
+export function fieldOverrides(): Partial<Record<keyof typeof PROFILE_KEYS, string>> {
+  try {
+    const raw = process.env.APIFY_FIELD_MAP;
+    return raw ? (JSON.parse(raw) as Partial<Record<keyof typeof PROFILE_KEYS, string>>) : {};
+  } catch {
+    return {};
+  }
 }
 const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : undefined);
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined);
 const arr = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isObj) : []);
 
-export const PROFILE_KEYS = {
-  name: ["fullName", "full_name", "name"],
-  firstName: ["firstName", "first_name"],
-  lastName: ["lastName", "last_name"],
-  headline: ["headline", "title"],
-  about: ["summary", "about"],
-  location: ["location.default", "location.linkedinText", "location", "addressWithCountry", "geoLocationName"],
-  company: ["currentCompany.name", "companyName", "company", "currentPosition.0.companyName"],
-  role: ["jobTitle", "currentPosition.0.title", "occupation"],
+export const PROFILE_KEYS: Record<string, string[]> = {
+  name: ["fullName", "full_name", "name", "basic_info.fullname", "basicInfo.fullName"],
+  firstName: ["firstName", "first_name", "basic_info.first_name"],
+  lastName: ["lastName", "last_name", "basic_info.last_name"],
+  headline: ["headline", "basic_info.headline", "title"],
+  about: ["summary", "about", "basic_info.about"],
+  location: ["location.default", "location.linkedinText", "location.full", "basic_info.location.full", "location", "addressWithCountry", "geoLocationName", "locationName"],
+  company: ["currentCompany.name", "companyName", "company", "currentPosition.0.companyName", "basic_info.current_company", "current_company.name"],
+  role: ["jobTitle", "currentPosition.0.title", "occupation", "position"],
   experience: ["experience", "experiences", "positions", "workHistory"],
   education: ["education", "educations"],
   skills: ["skills"],
   posts: ["posts", "recentPosts", "activity"],
-  followers: ["followers", "followersCount", "followerCount"],
-  connections: ["connections", "connectionsCount", "connectionCount"],
-  photo: ["profilePicture", "pictureUrl", "profilePic", "photoUrl", "picture", "avatar"],
+  followers: ["followers", "followersCount", "followerCount", "basic_info.follower_count"],
+  connections: ["connections", "connectionsCount", "connectionCount", "basic_info.connection_count"],
+  photo: ["profilePicture", "pictureUrl", "profilePic", "photoUrl", "picture", "avatar", "profile_picture_url", "basic_info.profile_picture_url", "profilePicHighQuality"],
 };
 
 function mapExperience(items: Obj[]): ExperienceItem[] {
@@ -89,26 +110,40 @@ function photoUrl(v: unknown): string | undefined {
   return undefined;
 }
 
+/** Keys to try for a field: an env override first, then the built-in candidates. */
+function keysFor(field: string): string[] {
+  const o = (fieldOverrides() as Record<string, string | undefined>)[field];
+  return o ? [o, ...PROFILE_KEYS[field]] : PROFILE_KEYS[field];
+}
+
+/** Which item key each field was read from (for the /admin/apify check). */
+export function mappingReport(item: Obj): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const f of Object.keys(PROFILE_KEYS)) out[f] = pickKey(item, keysFor(f))[1] ?? null;
+  return out;
+}
+
 export function mapProfile(item: Obj, linkedinUrl: string): NormalizedProfile {
-  const first = s(pick(item, PROFILE_KEYS.firstName));
-  const last = s(pick(item, PROFILE_KEYS.lastName));
-  const experience = mapExperience(arr(pick(item, PROFILE_KEYS.experience)));
+  const K = keysFor;
+  const first = s(pick(item, K("firstName")));
+  const last = s(pick(item, K("lastName")));
+  const experience = mapExperience(arr(pick(item, K("experience"))));
   const profile: NormalizedProfile = {
     linkedinUrl,
-    name: s(pick(item, PROFILE_KEYS.name)) ?? ([first, last].filter(Boolean).join(" ") || undefined),
-    headline: s(pick(item, PROFILE_KEYS.headline)),
-    about: s(pick(item, PROFILE_KEYS.about)),
-    location: s(pick(item, PROFILE_KEYS.location)),
+    name: s(pick(item, K("name"))) ?? ([first, last].filter(Boolean).join(" ") || undefined),
+    headline: s(pick(item, K("headline"))),
+    about: s(pick(item, K("about"))),
+    location: s(pick(item, K("location"))),
     // Current company / role come from explicit fields, or the first experience entry WITHOUT an end date.
-    company: s(pick(item, PROFILE_KEYS.company)) ?? experience.find((e) => !e.end)?.company,
-    role: s(pick(item, PROFILE_KEYS.role)) ?? experience.find((e) => !e.end)?.title,
+    company: s(pick(item, K("company"))) ?? experience.find((e) => !e.end)?.company,
+    role: s(pick(item, K("role"))) ?? experience.find((e) => !e.end)?.title,
     experience,
-    education: mapEducation(arr(pick(item, PROFILE_KEYS.education))),
-    skills: mapSkills(pick(item, PROFILE_KEYS.skills)),
-    recentPosts: mapPosts(pick(item, PROFILE_KEYS.posts)),
-    followers: n(pick(item, PROFILE_KEYS.followers)),
-    connections: n(pick(item, PROFILE_KEYS.connections)),
-    photoUrl: photoUrl(pick(item, PROFILE_KEYS.photo)),
+    education: mapEducation(arr(pick(item, K("education")))),
+    skills: mapSkills(pick(item, K("skills"))),
+    recentPosts: mapPosts(pick(item, K("posts"))),
+    followers: n(pick(item, K("followers"))),
+    connections: n(pick(item, K("connections"))),
+    photoUrl: photoUrl(pick(item, K("photo"))),
     raw: item,
   };
   return profile;
@@ -123,6 +158,6 @@ export function mapCandidate(item: Obj): Candidate | null {
     headline: s(pick(item, ["headline", "title"])),
     company: s(pick(item, ["currentCompany.name", "companyName", "company"])),
     location: s(pick(item, ["location.default", "location"])),
-    photoUrl: photoUrl(pick(item, PROFILE_KEYS.photo)),
+    photoUrl: photoUrl(pick(item, keysFor("photo"))),
   };
 }

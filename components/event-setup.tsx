@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, ChoiceChip, Field, TopBar } from "@/components/ui";
+import { Button, ChoiceChip, TopBar } from "@/components/ui";
+import { EventSearch, type EventChoice, type PastEvent } from "@/components/event-search";
 import { PURPOSES, LABEL_SETS } from "@/lib/labels";
 import { api } from "@/lib/client";
 import type { Purpose } from "@/lib/types";
@@ -11,12 +12,13 @@ const iso = (d: Date) => {
   return z.toISOString().slice(0, 10);
 };
 
-export function EventSetup({ purpose: initialPurpose, back }: { purpose: Purpose; back: string }) {
+export function EventSetup({ purpose: initialPurpose, back, past = [] }: { purpose: Purpose; back: string; past?: PastEvent[] }) {
   const router = useRouter();
   const today = iso(new Date());
   const tomorrow = iso(new Date(Date.now() + 86400000));
   const [purpose, setPurpose] = useState<Purpose>(initialPurpose);
   const [name, setName] = useState("");
+  const [existing, setExisting] = useState<PastEvent | null>(null);
   const [date, setDate] = useState(today);
   const [pick, setPick] = useState(false);
   const [delay, setDelay] = useState(1);
@@ -25,10 +27,15 @@ export function EventSetup({ purpose: initialPurpose, back }: { purpose: Purpose
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return setErr("Give the event a name.");
+    if (!name.trim()) return setErr("Search for your event, or type its name.");
     setBusy(true);
     try {
-      await api("/api/events", "POST", { name, event_date: date, followup_delay_days: delay, purpose });
+      if (existing) {
+        // One of your own events: switch back to it instead of creating a duplicate.
+        await api("/api/profile", "PATCH", { current_event_id: existing.id, purpose });
+      } else {
+        await api("/api/events", "POST", { name, event_date: date, followup_delay_days: delay, purpose });
+      }
       router.push("/people");
       router.refresh();
     } catch (e) {
@@ -59,15 +66,26 @@ export function EventSetup({ purpose: initialPurpose, back }: { purpose: Purpose
           </p>
         </fieldset>
 
-        <Field
-          className="mt-6"
-          id="event-name"
-          label="Event name"
-          placeholder="LogiMAT Stuttgart"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
+        <div className="mt-6">
+          <EventSearch
+            past={past}
+            value={name}
+            onChoose={(c: EventChoice) => {
+              setErr("");
+              if (c.kind === "past") {
+                setExisting(c.event);
+                setName(c.event.name);
+                setDate(c.event.event_date);
+              } else {
+                setExisting(null);
+                setName(c.kind === "fair" ? c.fair.name : c.name);
+              }
+            }}
+          />
+        </div>
 
+        {!existing && (
+        <>
         <fieldset className="mt-6">
           <legend className="mb-2 text-[13px] font-medium text-muted">Date</legend>
           <div className="flex flex-wrap gap-2">
@@ -104,9 +122,12 @@ export function EventSetup({ purpose: initialPurpose, back }: { purpose: Purpose
           </div>
         </fieldset>
 
+        </>
+        )}
+
         {err && <p role="alert" className="mt-4 text-[14px] text-danger">{err}</p>}
         <Button type="submit" className="mt-10" disabled={busy}>
-          Start catching
+          {existing ? "Switch to this event" : "Start catching"}
         </Button>
       </form>
     </>

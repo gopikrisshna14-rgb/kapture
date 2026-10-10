@@ -18,7 +18,8 @@ export const POST = withRepo(async (req) => {
     const fields = await extractCard(base64, type);
     if (!Object.values(fields).some(Boolean)) return fail("We couldn't read that card. Try again with more light, or type the details.", 422);
     return json(fields);
-  } catch {
+  } catch (e) {
+    if ((e as Error).message === "ai_not_configured") return fail("Card reading isn't set up yet (needs an Anthropic API key). Type the details instead.", 503);
     return fail("We couldn't read that card. Try again, or type the details.", 502);
   }
 });

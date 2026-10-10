@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, ShieldCheck, NotebookPen, CreditCard, Link2, LogOut, BarChart3, Users } from "lucide-react";
+import { ChevronRight, ShieldCheck, NotebookPen, CreditCard, Link2, LogOut, BarChart3, Users, Plug } from "lucide-react";
 import { Avatar, Button, Field, SectionLabel, Chip } from "@/components/ui";
 import { Sheet } from "@/components/sheet";
 import { api } from "@/lib/client";
@@ -96,6 +96,7 @@ export function AccountScreen({
         <Row href="/account/plans" icon={CreditCard} label="Plans" detail="Free" />
         <Row href="/events/new" icon={Users} label="New event" detail={PURPOSES.find((p) => p.id === profile.purpose)?.label} />
         {isAdmin && <Row href="/admin/pilot" icon={BarChart3} label="Pilot dashboard" />}
+        {isAdmin && <Row href="/admin/apify" icon={Plug} label="Apify connection" detail={backends.profiles === "apify" ? "Live" : "Not live yet"} />}
       </nav>
 
       <Button variant="secondary" className="mt-6" onClick={signOut}>

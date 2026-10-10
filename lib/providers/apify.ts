@@ -3,21 +3,22 @@ import type { Candidate, NormalizedProfile } from "../types";
 import { ProfileProvider, ProviderError } from "./types";
 import { mapCandidate, mapPosts, mapProfile } from "./apify-map";
 
-const API = "https://api.apify.com/v2";
+// APIFY_API_BASE exists only for tests against a stand-in server.
+const API = process.env.APIFY_API_BASE || "https://api.apify.com/v2";
 const SYNC_TIMEOUT_S = 280; // run-sync endpoints are capped at 300 s by Apify
 
 /**
  * Fills an input template from env, e.g. APIFY_PROFILE_INPUT='{"profileUrls":["{url}"]}'.
  * The default below is a guess at the actor's input key: confirm it with scripts/apify-inspect.mjs.
  */
-function buildInput(template: string | undefined, fallback: Record<string, unknown>, vars: Record<string, string>) {
+export function buildInput(template: string | undefined, fallback: Record<string, unknown>, vars: Record<string, string>) {
   if (!template) return fallback;
   let s = template;
   for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(JSON.stringify(v).slice(1, -1));
   return JSON.parse(s) as Record<string, unknown>;
 }
 
-async function runActor(actor: string, input: Record<string, unknown>): Promise<Record<string, unknown>[]> {
+export async function runActor(actor: string, input: Record<string, unknown>): Promise<Record<string, unknown>[]> {
   const token = process.env.APIFY_TOKEN;
   if (!token) throw new ProviderError("APIFY_TOKEN missing", "config");
   const id = actor.replace("/", "~");
@@ -89,4 +90,24 @@ export class ApifyProvider implements ProfileProvider {
     );
     return items.map(mapCandidate).filter((c): c is Candidate => c !== null).slice(0, 3);
   }
+}
+
+/** For /admin/apify: the actor's input schema properties (names and types only). */
+export async function actorInputSchema(actor: string): Promise<{ title?: string; properties: { key: string; type: string; title?: string }[]; required: string[] }> {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) throw new ProviderError("APIFY_TOKEN missing", "config");
+  const h = { authorization: `Bearer ${token}` };
+  const act = await fetch(`${API}/acts/${actor.replace("/", "~")}`, { headers: h, cache: "no-store" });
+  if (act.status === 401) throw new ProviderError("Apify rejected the token", "config");
+  if (act.status === 404) throw new ProviderError("Actor not found: check APIFY_PROFILE_ACTOR", "config");
+  const a = (await act.json()) as { data?: { title?: string; taggedBuilds?: { latest?: { buildId?: string } } } };
+  const buildId = a.data?.taggedBuilds?.latest?.buildId;
+  if (!buildId) return { title: a.data?.title, properties: [], required: [] };
+  const b = (await (await fetch(`${API}/actor-builds/${buildId}`, { headers: h, cache: "no-store" })).json()) as { data?: { inputSchema?: string } };
+  const schema = b.data?.inputSchema ? (JSON.parse(b.data.inputSchema) as { properties?: Record<string, { type?: string; title?: string }>; required?: string[] }) : {};
+  return {
+    title: a.data?.title,
+    properties: Object.entries(schema.properties ?? {}).map(([key, v]) => ({ key, type: v.type ?? "?", title: v.title })),
+    required: schema.required ?? [],
+  };
 }

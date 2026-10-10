@@ -82,6 +82,8 @@ APIFY_POSTS_ACTOR=
 APIFY_SEARCH_ACTOR=
 ```
 
+**Easiest check: open Account → Apify connection (`/admin/apify`) on the deployed app.** It shows whether the token and actor are accepted, the actor's input fields, and runs one real profile so you can see which fields came back and where from. "Copy as APIFY_FIELD_MAP" gives you an override you can paste into Vercel if a field is read from the wrong key. For lead capture, the basic fields are what matter: name, headline, role, company, location, photo. Leave `APIFY_POSTS_ACTOR` empty unless you want posts.
+
 **Check the Apify field mapping first.** The build sandbox could not reach `api.apify.com` or `apify.com`, so the actor's input key and output field names in `lib/providers/apify-map.ts` are **unverified candidates**. Each field tries a short list of likely keys, and a key that isn't there leaves the field empty; nothing is guessed. To confirm the mapping:
 
 ```bash
