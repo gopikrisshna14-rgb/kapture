@@ -6,6 +6,7 @@ import { ChevronRight, ShieldCheck, NotebookPen, CreditCard, Link2, LogOut, BarC
 import { Avatar, Button, Field, SectionLabel, Chip } from "@/components/ui";
 import { Sheet } from "@/components/sheet";
 import { api } from "@/lib/client";
+import { SampleButton } from "@/components/sample-button";
 import { PURPOSES } from "@/lib/labels";
 import type { Profile } from "@/lib/types";
 
@@ -79,8 +80,9 @@ export function AccountScreen({
         <div className="mt-4 rounded-[20px] border border-line bg-surface p-4">
           <p className="flex items-center gap-2 text-[14px] font-semibold"><Chip tone="accent">Demo</Chip> Some parts use sample data</p>
           <p className="mt-2 text-[13px] text-muted">
-            Data: {backends.data === "demo" ? "local demo store" : "Supabase"} · Profiles: {backends.profiles === "fixtures" ? "sample profiles" : "Apify"} · AI: {backends.ai === "fixtures" ? "sample text" : "Claude"}
+            Data: {backends.data === "demo" ? "demo store" : "Supabase"} · Profiles: {backends.profiles === "fixtures" ? "sample profiles" : "Apify"} · AI: {backends.ai === "fixtures" ? "sample text" : "Claude"}
           </p>
+          {backends.profiles === "fixtures" && <SampleButton className="mt-3 h-11 text-[15px]" />}
         </div>
       )}
 

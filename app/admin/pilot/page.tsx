@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/server-page";
 import { adminUserId, hasSupabase } from "@/lib/config";
-import { DEMO_USER_ID } from "@/lib/db/demo-store";
 import { allUsageEvents } from "@/lib/session";
 import { pilotMetrics } from "@/lib/pilot";
 import { Card, TopBar } from "@/components/ui";
@@ -13,7 +12,7 @@ const pct = (v: number | null) => (v === null ? "–" : `${Math.round(v * 100)}%
 export default async function PilotPage() {
   const { profile } = await requireUser({ needEvent: false });
   const admin = adminUserId();
-  const allowed = admin ? admin === profile.id : !hasSupabase() && profile.id === DEMO_USER_ID;
+  const allowed = admin ? admin === profile.id : !hasSupabase();
   if (!allowed) notFound();
   const m = pilotMetrics(await allUsageEvents());
 

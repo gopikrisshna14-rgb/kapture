@@ -36,7 +36,7 @@ export default async function PeoplePage() {
       purpose={profile.purpose}
       used={used}
       limit={FREE_CAPTURE_LIMIT}
-      demo={backendSummary().data === "demo"}
+      demo={backendSummary().profiles === "fixtures"}
     />
   );
 }

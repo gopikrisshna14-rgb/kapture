@@ -1,8 +1,8 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { hasSupabase } from "./config";
-import { DEMO_USER_ID, db } from "./db/demo-store";
-import { DemoRepo } from "./db/demo";
+import { DemoRepo, demoProfileByHandle, demoUserIds } from "./db/demo";
+import { readDemoCookie } from "./demo-session";
 import { SupabaseRepo } from "./db/supabase";
 import type { Repo } from "./db/repo";
 import { supabaseAdmin, supabaseServer } from "./supabase/server";
@@ -22,9 +22,10 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     return data.user ? { id: data.user.id, email: data.user.email ?? null } : null;
   }
   const store = await cookies();
-  const v = store.get(DEMO_COOKIE)?.value;
-  if (!v) return null;
-  return { id: DEMO_USER_ID, email: decodeURIComponent(v) || null };
+  const uid = readDemoCookie(store.get(DEMO_COOKIE)?.value);
+  if (!uid) return null;
+  const profile = await new DemoRepo(uid).getProfile();
+  return { id: uid, email: profile?.email ?? null };
 }
 
 const adminOrUndefined = () => (process.env.SUPABASE_SERVICE_ROLE_KEY ? supabaseAdmin() : undefined);
@@ -48,7 +49,7 @@ export async function findProfileByHandle(handle: string): Promise<Profile | nul
     const r = await supabaseAdmin().from("profiles").select("*").eq("handle", handle).maybeSingle();
     return (r.data as Profile | null) ?? null;
   }
-  return db().profiles.find((p) => p.handle === handle) ?? null;
+  return demoProfileByHandle(handle);
 }
 
 export async function allUsageEvents(): Promise<UsageEvent[]> {
@@ -56,7 +57,8 @@ export async function allUsageEvents(): Promise<UsageEvent[]> {
     const r = await supabaseAdmin().from("usage_events").select("*").order("at", { ascending: true }).limit(50000);
     return (r.data as UsageEvent[]) ?? [];
   }
-  return db().usage_events;
+  const all = await Promise.all((await demoUserIds()).map((u) => new DemoRepo(u).listUsageEvents()));
+  return all.flat();
 }
 
 export async function expiredPeople(): Promise<Pick<Person, "id" | "user_id">[]> {
@@ -65,5 +67,6 @@ export async function expiredPeople(): Promise<Pick<Person, "id" | "user_id">[]>
     const r = await supabaseAdmin().from("people").select("id,user_id").lt("delete_after", nowIso).limit(1000);
     return (r.data as Pick<Person, "id" | "user_id">[]) ?? [];
   }
-  return db().people.filter((p) => p.delete_after && p.delete_after < nowIso).map(({ id, user_id }) => ({ id, user_id }));
+  const all = await Promise.all((await demoUserIds()).map((u) => new DemoRepo(u).listPeople()));
+  return all.flat().filter((p) => p.delete_after && p.delete_after < nowIso).map(({ id, user_id }) => ({ id, user_id }));
 }

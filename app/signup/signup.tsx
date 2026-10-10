@@ -13,7 +13,7 @@ function GoogleMark() {
   );
 }
 
-export function SignUp({ demo, next, error }: { demo: boolean; next?: string; error?: string }) {
+export function SignUp({ demo, storeWarning, next, error }: { demo: boolean; storeWarning?: boolean; next?: string; error?: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
@@ -79,8 +79,16 @@ export function SignUp({ demo, next, error }: { demo: boolean; next?: string; er
         <p className="mt-2 text-muted">Free for your first 50 people every month.</p>
         {demo && (
           <p className="mt-4 rounded-2xl border border-line bg-surface p-3 text-[14px] text-muted">
-            Demo mode: no email is sent. Any address signs you in.
+            Demo mode: no email is sent. Any address signs you in. Use the same address to come back to your data.
           </p>
+        )}
+        {storeWarning && (
+          <div role="alert" className="mt-3 rounded-2xl border border-danger p-3 text-[14px]">
+            <p className="font-semibold text-danger">Demo storage isn&apos;t connected yet.</p>
+            <p className="mt-1 text-muted">
+              On Vercel, demo data needs a free Redis store or the app forgets you between screens. In Vercel open Storage → Create → Upstash for Redis, connect it to this project, then redeploy.
+            </p>
+          </div>
         )}
         <div className="mt-8 space-y-3">
           <Button variant="secondary" onClick={google} disabled={busy}>

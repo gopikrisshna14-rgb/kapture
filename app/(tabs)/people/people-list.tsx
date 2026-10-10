@@ -8,6 +8,7 @@ import { Sheet } from "@/components/sheet";
 import { LABEL_SETS } from "@/lib/labels";
 import { relativeTime } from "@/lib/format";
 import { api } from "@/lib/client";
+import { SampleButton } from "@/components/sample-button";
 import type { Priority, Purpose, EnrichmentStatus, ConnectStatus } from "@/lib/types";
 
 export interface Row {
@@ -33,6 +34,7 @@ export function PeopleList({
   purpose,
   used,
   limit,
+  demo,
 }: {
   people: Row[];
   events: { id: string; name: string; event_date: string }[];
@@ -134,6 +136,7 @@ export function PeopleList({
           <h2 className="mt-4 text-[22px] font-bold">No one here yet.</h2>
           <p className="mt-1 text-muted">Scan someone&apos;s LinkedIn code or card to catch them.</p>
           <ButtonLink href="/scan" className="mt-6">Scan someone</ButtonLink>
+          {demo && <SampleButton className="mt-3" />}
         </div>
       ) : (
         <ul className="mt-4 divide-y divide-line" aria-label="People">

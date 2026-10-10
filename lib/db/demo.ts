@@ -1,7 +1,8 @@
+import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Repo, PersonInsert, PersonPatch } from "./repo";
-import type { ConnectRequest, EventRow, NoteTemplate, Person, Profile } from "../types";
-import { db, persist } from "./demo-store";
+import type { ConnectRequest, EventRow, NormalizedProfile, NoteTemplate, Person, Profile, UsageEvent } from "../types";
+import { keys, kv, putRow, row, rows } from "./demo-store";
 
 const now = () => new Date().toISOString();
 
@@ -40,192 +41,180 @@ export function blankPerson(userId: string, p: PersonInsert): Person {
   };
 }
 
+interface CacheRow {
+  linkedin_url: string;
+  profile: NormalizedProfile;
+  fetched_at: string;
+}
+
+const byNewest = <T extends { created_at: string }>(a: T, b: T) => b.created_at.localeCompare(a.created_at);
+
+/** Demo-mode repo: one hash per table per user in the demo KV store. */
 export class DemoRepo implements Repo {
   constructor(readonly userId: string) {}
+  private k = (table: string) => keys.table(table, this.userId);
 
   async getProfile() {
-    return db().profiles.find((p) => p.id === this.userId) ?? null;
+    return row<Profile>(keys.profiles, this.userId);
   }
   async updateProfile(patch: Partial<Profile>) {
-    const d = db();
-    let p = d.profiles.find((x) => x.id === this.userId);
-    if (!p) {
-      p = {
-        id: this.userId,
-        display_name: null,
-        headline: null,
-        company: null,
-        linkedin_url: null,
-        handle: null,
-        purpose: "selling",
-        max_note_length: 200,
-        connect_mode: "assisted",
-        auto_delete_months: 12,
-        current_event_id: null,
-        ai_personalise: true,
-        created_at: now(),
-      };
-      d.profiles.push(p);
-    }
-    Object.assign(p, patch, { id: this.userId });
-    persist();
-    return { ...p };
+    const existing = await this.getProfile();
+    const p: Profile = {
+      id: this.userId,
+      display_name: null,
+      headline: null,
+      company: null,
+      linkedin_url: null,
+      handle: null,
+      purpose: "selling",
+      max_note_length: 200,
+      connect_mode: "assisted",
+      auto_delete_months: 12,
+      current_event_id: null,
+      ai_personalise: true,
+      created_at: now(),
+      ...existing,
+      ...patch,
+    };
+    p.id = this.userId;
+    if (existing?.handle && existing.handle !== p.handle) await kv().hdel(keys.handles, existing.handle);
+    if (p.handle) await kv().hset(keys.handles, p.handle, this.userId);
+    await putRow(keys.profiles, this.userId, p);
+    if (!existing) await kv().hset(keys.users, this.userId, "1");
+    return p;
   }
   async isHandleTaken(handle: string) {
-    return db().profiles.some((p) => p.handle === handle && p.id !== this.userId);
+    const owner = await kv().hget(keys.handles, handle);
+    return Boolean(owner && owner !== this.userId);
   }
 
   async listEvents() {
-    return db()
-      .events.filter((e) => e.user_id === this.userId)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return (await rows<EventRow>(this.k("events"))).sort(byNewest);
   }
   async getEvent(id: string) {
-    return db().events.find((e) => e.id === id && e.user_id === this.userId) ?? null;
+    return row<EventRow>(this.k("events"), id);
   }
   async createEvent(e: Pick<EventRow, "name" | "event_date" | "followup_delay_days">) {
-    const row: EventRow = { id: randomUUID(), user_id: this.userId, created_at: now(), ...e };
-    db().events.push(row);
-    persist();
-    return row;
+    const r: EventRow = { id: randomUUID(), user_id: this.userId, created_at: now(), ...e };
+    await putRow(this.k("events"), r.id, r);
+    return r;
   }
 
   async listPeople() {
-    return db()
-      .people.filter((p) => p.user_id === this.userId)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return (await rows<Person>(this.k("people"))).sort(byNewest);
   }
   async getPerson(id: string) {
-    return db().people.find((p) => p.id === id && p.user_id === this.userId) ?? null;
+    return row<Person>(this.k("people"), id);
   }
   async createPerson(p: PersonInsert) {
-    const row = blankPerson(this.userId, p);
-    db().people.push(row);
-    persist();
-    return row;
+    const r = blankPerson(this.userId, p);
+    await putRow(this.k("people"), r.id, r);
+    return r;
   }
   async updatePerson(id: string, patch: PersonPatch) {
-    const row = await this.getPerson(id);
-    if (!row) throw new Error("not_found");
-    Object.assign(row, patch);
-    persist();
-    return { ...row };
+    // Read right before writing so concurrent updates (background enrichment vs. the review screen) rarely clash.
+    const current = await this.getPerson(id);
+    if (!current) throw new Error("not_found");
+    const next = { ...current, ...patch, id, user_id: this.userId };
+    await putRow(this.k("people"), id, next);
+    return next;
   }
   async deletePerson(id: string) {
-    const d = db();
-    const row = await this.getPerson(id);
-    if (!row) return;
-    d.people = d.people.filter((p) => p.id !== id);
-    d.connect_requests = d.connect_requests.filter((r) => r.person_id !== id);
-    if (row.linkedin_url) {
-      d.enrichment_cache = d.enrichment_cache.filter(
-        (c) => !(c.user_id === this.userId && c.linkedin_url === row.linkedin_url),
-      );
-    }
-    if (row.photo_path) delete d.photos[row.photo_path];
-    persist();
+    const p = await this.getPerson(id);
+    if (!p) return;
+    await kv().hdel(this.k("people"), id);
+    await kv().hdel(this.k("connect_requests"), id);
+    if (p.linkedin_url) await kv().hdel(this.k("enrichment_cache"), p.linkedin_url);
+    if (p.photo_path) await kv().hdel(this.k("photos"), p.photo_path);
   }
   async countCapturesSince(since: Date) {
     const s = since.toISOString();
-    return db().people.filter(
-      (p) => p.user_id === this.userId && p.source !== "self_submitted" && p.created_at >= s,
-    ).length;
+    return (await this.listPeople()).filter((p) => p.source !== "self_submitted" && p.created_at >= s).length;
   }
 
+  // Connect requests are keyed by person id (one request per person).
   async listRequests() {
-    return db().connect_requests.filter((r) => r.user_id === this.userId);
+    return rows<ConnectRequest>(this.k("connect_requests"));
   }
   async getRequestForPerson(personId: string) {
-    return db().connect_requests.find((r) => r.person_id === personId && r.user_id === this.userId) ?? null;
+    return row<ConnectRequest>(this.k("connect_requests"), personId);
   }
   async upsertRequest(personId: string, patch: Partial<ConnectRequest>) {
     if (!(await this.getPerson(personId))) throw new Error("not_found");
-    let r = await this.getRequestForPerson(personId);
-    if (!r) {
-      r = {
-        id: randomUUID(),
-        person_id: personId,
-        user_id: this.userId,
-        note: null,
-        mode: "assisted",
-        status: "queued",
-        queued_at: now(),
-        sent_at: null,
-        accepted_at: null,
-      };
-      db().connect_requests.push(r);
-    }
-    Object.assign(r, patch, { person_id: personId, user_id: this.userId });
-    persist();
-    return { ...r };
+    const existing = await this.getRequestForPerson(personId);
+    const r: ConnectRequest = {
+      id: existing?.id ?? randomUUID(),
+      note: null,
+      mode: "assisted",
+      status: "queued",
+      queued_at: now(),
+      sent_at: null,
+      accepted_at: null,
+      ...existing,
+      ...patch,
+      person_id: personId,
+      user_id: this.userId,
+    };
+    await putRow(this.k("connect_requests"), personId, r);
+    return r;
   }
   async deleteRequestForPerson(personId: string) {
-    const d = db();
-    d.connect_requests = d.connect_requests.filter((r) => !(r.person_id === personId && r.user_id === this.userId));
-    persist();
+    await kv().hdel(this.k("connect_requests"), personId);
   }
 
   async listTemplates() {
-    return db().note_templates.filter((t) => t.user_id === this.userId);
+    return (await rows<NoteTemplate>(this.k("note_templates"))).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
   }
   async createTemplate(t: Pick<NoteTemplate, "name" | "body" | "is_default">) {
-    const row: NoteTemplate = { id: randomUUID(), user_id: this.userId, ...t };
-    db().note_templates.push(row);
-    persist();
-    return row;
+    const r: NoteTemplate = { id: randomUUID(), user_id: this.userId, ...t };
+    await putRow(this.k("note_templates"), r.id, r);
+    return r;
   }
   async updateTemplate(id: string, patch: Partial<NoteTemplate>) {
-    const t = db().note_templates.find((x) => x.id === id && x.user_id === this.userId);
+    const t = await row<NoteTemplate>(this.k("note_templates"), id);
     if (!t) throw new Error("not_found");
-    Object.assign(t, patch, { id, user_id: this.userId });
-    persist();
-    return { ...t };
+    const r = { ...t, ...patch, id, user_id: this.userId };
+    await putRow(this.k("note_templates"), id, r);
+    return r;
   }
   async deleteTemplate(id: string) {
-    const d = db();
-    d.note_templates = d.note_templates.filter((t) => !(t.id === id && t.user_id === this.userId));
-    persist();
+    await kv().hdel(this.k("note_templates"), id);
   }
 
   async logEvent(event: string, personId?: string | null, meta?: Record<string, unknown> | null) {
-    const d = db();
-    d.usage_events.push({
-      id: d.usage_events.length + 1,
-      user_id: this.userId,
-      event,
-      person_id: personId ?? null,
-      meta: meta ?? null,
-      at: now(),
-    });
-    persist();
+    const e: UsageEvent = { id: Date.now() * 1000 + Math.floor(Math.random() * 1000), user_id: this.userId, event, person_id: personId ?? null, meta: meta ?? null, at: now() };
+    await putRow(this.k("usage_events"), String(e.id), e);
   }
   async listUsageEvents() {
-    return db().usage_events.filter((e) => e.user_id === this.userId);
+    return (await rows<UsageEvent>(this.k("usage_events"))).sort((a, b) => a.at.localeCompare(b.at));
   }
 
   async getCachedProfile(linkedinUrl: string, maxAgeDays: number) {
-    const c = db().enrichment_cache.find((x) => x.user_id === this.userId && x.linkedin_url === linkedinUrl);
-    if (!c) return null;
-    if (Date.now() - Date.parse(c.fetched_at) > maxAgeDays * 86400_000) return null;
+    const c = await row<CacheRow>(this.k("enrichment_cache"), linkedinUrl);
+    if (!c || Date.now() - Date.parse(c.fetched_at) > maxAgeDays * 86400_000) return null;
     return c.profile;
   }
-  async setCachedProfile(linkedinUrl: string, profile: Parameters<Repo["setCachedProfile"]>[1]) {
-    const d = db();
-    d.enrichment_cache = d.enrichment_cache.filter(
-      (x) => !(x.user_id === this.userId && x.linkedin_url === linkedinUrl),
-    );
-    d.enrichment_cache.push({ user_id: this.userId, linkedin_url: linkedinUrl, profile, fetched_at: now() });
-    persist();
+  async setCachedProfile(linkedinUrl: string, profile: NormalizedProfile) {
+    await putRow(this.k("enrichment_cache"), linkedinUrl, { linkedin_url: linkedinUrl, profile, fetched_at: now() });
   }
 
   async uploadPhoto(personId: string, bytes: ArrayBuffer, contentType: string) {
     const key = `${this.userId}/${personId}`;
-    db().photos[key] = { contentType, base64: Buffer.from(bytes).toString("base64") };
-    persist();
+    await putRow(this.k("photos"), key, { contentType, base64: Buffer.from(bytes).toString("base64") });
     return key;
   }
   async photoUrl(path: string) {
-    const p = db().photos[path];
+    const p = await row<{ contentType: string; base64: string }>(this.k("photos"), path);
     return p ? `data:${p.contentType};base64,${p.base64}` : null;
   }
+}
+
+// ---- Cross-user lookups (public page, admin, cron) ----
+
+export async function demoUserIds(): Promise<string[]> {
+  return Object.keys(await kv().hgetall(keys.users));
+}
+export async function demoProfileByHandle(handle: string): Promise<Profile | null> {
+  const uid = await kv().hget(keys.handles, handle);
+  return uid ? row<Profile>(keys.profiles, uid) : null;
 }

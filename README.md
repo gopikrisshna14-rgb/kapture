@@ -17,7 +17,7 @@ cp .env.example .env.local   # DEMO_MODE=true, everything else empty
 npm run dev                  # http://localhost:3000
 ```
 
-Demo mode replaces every external call with realistic fixtures. Data lives in `.data/demo-db.json`; delete that file to start over. Sign in with any email address (no email is sent). Then:
+Demo mode replaces every external call with realistic fixtures. Data lives in `.data/demo-kv.json`; delete that file to start over. Sign in with any email address (no email is sent); the same address always brings you back to the same demo data, and each address gets its own. **Account → Add sample people** (or the button on the empty People screen) fills every screen with sample data. Then:
 
 - **Scan → LinkedIn QR:** point the camera at any LinkedIn QR code. In demo mode every profile link maps to a sample profile.
 - **Paste link** with one of these special demo slugs:
@@ -107,6 +107,18 @@ Profiles are cached per user for 30 days (`enrichment_cache`), so the same URL i
 4. **Open LinkedIn** in the connect handoff uses an `intent://` link on Android, so the LinkedIn app opens directly. Without the app it falls back to the browser.
 
 ## Deploy to Vercel
+
+### Demo mode on Vercel needs a free Redis store
+
+Vercel runs different routes in different functions, each with its own memory and `/tmp`, so demo data written by one route (sign-in, a capture) is invisible to another. Without shared storage you sign in and land back on the welcome screen. The sign-up screen warns about this.
+
+1. In your Vercel project open **Storage → Create Database → Upstash for Redis** (free plan), pick region **Frankfurt (eu-central-1)**, and **Connect** it to the project.
+2. Vercel adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`) automatically.
+3. **Deployments → ⋯ → Redeploy.**
+
+Once Supabase is configured, Redis is no longer used.
+
+### Project setup
 
 Import the repo and add the environment variables from `.env.example`. `vercel.json` pins functions to `fra1` (Frankfurt) and adds the cleanup cron. Set `NEXT_PUBLIC_APP_URL` to the production URL; QR codes use the request host when they can.
 
