@@ -56,7 +56,7 @@ export default async function PersonPage({ params }: { params: Promise<{ id: str
         <div className="mt-6 grid grid-cols-2 gap-3">
           {person.linkedin_url ? (
             <ButtonLink href={`/connect/${id}/note`} size="md" className="h-12">
-              <Send size={18} aria-hidden /> Connect on LinkedIn
+              <Send size={18} aria-hidden /> <span className="text-[14px]">Connect on LinkedIn</span>
             </ButtonLink>
           ) : (
             <span className="inline-flex h-12 items-center justify-center rounded-full border border-line px-3 text-center text-[13px] text-dim">No LinkedIn profile</span>

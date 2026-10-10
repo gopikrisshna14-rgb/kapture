@@ -77,6 +77,7 @@ function fixtureBrief(p: NormalizedProfile): Brief {
   else if (p.headline) bits.push(p.headline);
   if (p.location) bits.push(`based in ${p.location}`);
   let inShort = bits.length ? bits.join(", ") + "." : null;
+  if (inShort) inShort = inShort[0].toUpperCase() + inShort.slice(1);
   if (inShort && p.experience && p.experience.length > 1 && p.experience[1].company)
     inShort += ` Previously at ${p.experience[1].company}.`;
   const starters: Starter[] = [];
