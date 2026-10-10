@@ -18,6 +18,7 @@ export interface Profile {
   connect_mode: "assisted" | "direct";
   auto_delete_months: number | null;
   current_event_id: string | null;
+  ai_personalise?: boolean | null;
   email?: string | null;
   created_at: string;
 }

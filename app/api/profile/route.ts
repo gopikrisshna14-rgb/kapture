@@ -32,6 +32,7 @@ export const PATCH = withRepo(async (req, repo) => {
   if (b.purpose === "selling" || b.purpose === "hiring" || b.purpose === "networking") patch.purpose = b.purpose;
   if (typeof b.max_note_length === "number") patch.max_note_length = Math.min(300, Math.max(80, Math.round(b.max_note_length)));
   if ("auto_delete_months" in b) patch.auto_delete_months = b.auto_delete_months === null ? null : 12;
+  if (typeof b.ai_personalise === "boolean") patch.ai_personalise = b.ai_personalise;
   if (typeof b.current_event_id === "string") {
     if (!(await repo.getEvent(b.current_event_id))) return fail("Unknown event", 404);
     patch.current_event_id = b.current_event_id;

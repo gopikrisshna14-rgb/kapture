@@ -62,6 +62,7 @@ export class DemoRepo implements Repo {
         connect_mode: "assisted",
         auto_delete_months: 12,
         current_event_id: null,
+        ai_personalise: true,
         created_at: now(),
       };
       d.profiles.push(p);

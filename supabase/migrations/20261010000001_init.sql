@@ -22,7 +22,8 @@ create table public.events (
 
 -- Additions to the brief's schema: which event is active, and loading-screen progress.
 alter table public.profiles
-  add column current_event_id uuid references public.events on delete set null;
+  add column current_event_id uuid references public.events on delete set null,
+  add column ai_personalise boolean default true;
 
 create table public.people (
   id uuid primary key default gen_random_uuid(),
